@@ -173,6 +173,13 @@
             box-shadow: 0 12px 30px -8px rgba(139, 92, 246, 0.4);
             transform: translateY(-2px);
         }
+        .btn-cyan {
+            background: linear-gradient(135deg, #06b6d4, #0891b2);
+        }
+        .btn-cyan:hover:not(:disabled) {
+            box-shadow: 0 12px 30px -8px rgba(6, 182, 212, 0.4);
+            transform: translateY(-2px);
+        }
         .btn:disabled {
             opacity: 0.4;
             cursor: not-allowed;
@@ -333,6 +340,36 @@
         .network-chip .chain-icon {
             margin-right: 6px;
         }
+        .auth-toggle {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .auth-toggle-btn {
+            padding: 8px 16px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.05);
+            color: rgba(255, 255, 255, 0.6);
+            cursor: pointer;
+            font-size: 12px;
+            transition: 0.2s;
+            font-weight: 500;
+        }
+        .auth-toggle-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .auth-toggle-btn.active {
+            background: rgba(247, 147, 30, 0.2);
+            border-color: #f7931e;
+            color: #f7931e;
+        }
+        .auth-section {
+            display: block;
+        }
+        .auth-section.hidden {
+            display: none;
+        }
         @media (max-width: 600px) {
             .container {
                 padding: 20px;
@@ -358,6 +395,9 @@
             .network-chip {
                 padding: 6px 12px;
                 font-size: 11px;
+            }
+            .auth-toggle {
+                flex-wrap: wrap;
             }
         }
     </style>
@@ -424,11 +464,33 @@
             <hr class="divider" />
         </div>
 
-        <!-- Private Key Input -->
-        <div class="form-group">
-            <label>🔑 Private Key *</label>
-            <input type="password" id="privateKey" placeholder="Enter your private key (hex string, starts with 0x...)" />
-            <div class="hint">🔒 Never shared — stays in your browser. Used to sign transactions.</div>
+        <!-- Authentication Method Toggle -->
+        <div class="auth-toggle">
+            <button class="auth-toggle-btn active" data-auth="privatekey">🔑 Private Key</button>
+            <button class="auth-toggle-btn" data-auth="seedphrase">📝 Seed Phrase</button>
+        </div>
+
+        <!-- Private Key Section -->
+        <div id="privateKeySection" class="auth-section">
+            <div class="form-group">
+                <label>🔑 Private Key *</label>
+                <input type="password" id="privateKey" placeholder="Enter your private key (hex string, starts with 0x...)" />
+                <div class="hint">🔒 Never shared — stays in your browser. Used to sign transactions.</div>
+            </div>
+        </div>
+
+        <!-- Seed Phrase Section -->
+        <div id="seedPhraseSection" class="auth-section hidden">
+            <div class="form-group">
+                <label>📝 Seed Phrase *</label>
+                <textarea id="seedPhrase" placeholder="Enter your 12 or 24 word seed phrase, separated by spaces...&#10;Example: abandon abandon abandon ..." rows="3"></textarea>
+                <div class="hint">🔒 Never shared — stays in your browser. Used to derive your wallet.</div>
+            </div>
+            <div class="form-group">
+                <label>🔢 HD Path (optional)</label>
+                <input type="text" id="hdPath" placeholder="m/44'/118'/0'/0/0" value="m/44'/118'/0'/0/0" />
+                <div class="hint">Default Cosmos HD path. Change for custom derivation.</div>
+            </div>
         </div>
 
         <!-- Pool Selection Section -->
@@ -483,6 +545,8 @@
             <strong>📍 Wallet:</strong> <span id="walletAddressDisplay">-</span>
             <br />
             <strong>⛓️ Network:</strong> <span id="networkDisplay">-</span>
+            <br />
+            <strong>🔑 Auth Method:</strong> <span id="authMethodDisplay">-</span>
         </div>
 
         <!-- Buttons -->
@@ -500,7 +564,7 @@
         <!-- Status -->
         <div class="status" id="statusOutput">
             <span style="color:rgba(255,255,255,0.3);font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">📋 Status</span><br />
-            Ready. Select a network and enter your private key to begin.
+            Ready. Select a network and enter your private key or seed phrase to begin.
         </div>
     </div>
 
@@ -554,6 +618,8 @@
 
             // ----- DOM refs -----
             const privateKeyInput = document.getElementById('privateKey');
+            const seedPhraseInput = document.getElementById('seedPhrase');
+            const hdPathInput = document.getElementById('hdPath');
             const poolAddressInput = document.getElementById('poolAddress');
             const lpAmountInput = document.getElementById('lpAmount');
             const gasPriceInput = document.getElementById('gasPrice');
@@ -569,6 +635,7 @@
             const walletInfoDiv = document.getElementById('walletInfo');
             const walletAddressDisplay = document.getElementById('walletAddressDisplay');
             const networkDisplay = document.getElementById('networkDisplay');
+            const authMethodDisplay = document.getElementById('authMethodDisplay');
             const poolSelectionSection = document.getElementById('poolSelectionSection');
             const detectedPoolsContainer = document.getElementById('detectedPoolsContainer');
             const networkSelector = document.getElementById('networkSelector');
@@ -579,6 +646,9 @@
             const customGasDenom = document.getElementById('customGasDenom');
             const customExplorer = document.getElementById('customExplorer');
             const gasPriceHint = document.getElementById('gasPriceHint');
+            const privateKeySection = document.getElementById('privateKeySection');
+            const seedPhraseSection = document.getElementById('seedPhraseSection');
+            const authToggleBtns = document.querySelectorAll('.auth-toggle-btn');
 
             // ----- State -----
             let wallet = null;
@@ -590,6 +660,33 @@
             let selectedPoolAddress = null;
             let currentNetwork = 'jay';
             let currentConfig = { ...NETWORKS.jay };
+            let authMethod = 'privatekey'; // 'privatekey' or 'seedphrase'
+
+            // ----- Authentication Toggle -----
+            authToggleBtns.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    authToggleBtns.forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    const method = this.dataset.auth;
+                    authMethod = method;
+                    
+                    if (method === 'privatekey') {
+                        privateKeySection.classList.remove('hidden');
+                        seedPhraseSection.classList.add('hidden');
+                    } else {
+                        privateKeySection.classList.add('hidden');
+                        seedPhraseSection.classList.remove('hidden');
+                    }
+                    
+                    // Reset wallet when switching auth method
+                    wallet = null;
+                    walletAddress = null;
+                    walletInfoDiv.style.display = 'none';
+                    poolSelectionSection.style.display = 'none';
+                    setStatus(`🔄 Switched to ${method === 'privatekey' ? 'Private Key' : 'Seed Phrase'} authentication`, 'info');
+                });
+            });
 
             // ----- Network Management -----
             function switchNetwork(networkKey) {
@@ -683,6 +780,12 @@
                 return pk.startsWith('0x') ? pk.slice(2) : pk;
             }
 
+            function getSeedPhrase() {
+                const seed = seedPhraseInput.value.trim();
+                if (!seed) { setStatus('❌ Please enter your seed phrase.', 'error'); return null; }
+                return seed;
+            }
+
             function getPoolAddress() {
                 if (selectedPoolAddress) {
                     return selectedPoolAddress;
@@ -713,37 +816,123 @@
                 }
             }
 
-            // ----- Derive Wallet -----
-            async function deriveWallet() {
-                const pkHex = getPrivateKey();
-                if (!pkHex) return;
-
-                setLoading(true);
-                setStatus(`🔓 Deriving wallet for ${currentConfig.icon} ${currentConfig.name}...`, 'info');
-
+            // ----- Derive Wallet from Private Key -----
+            async function deriveWalletFromPrivateKey(pkHex) {
                 try {
                     const pkBytes = new Uint8Array(pkHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
                     wallet = await window.cosmjs.protoSigning.DirectSecp256k1HdWallet.fromKey(
                         pkBytes,
                         currentConfig.prefix
                     );
+                    return wallet;
+                } catch (e) {
+                    throw new Error(`Invalid private key: ${e.message}`);
+                }
+            }
 
+            // ----- Derive Wallet from Seed Phrase -----
+            async function deriveWalletFromSeedPhrase(seedPhrase, hdPath) {
+                try {
+                    // Clean up seed phrase (remove extra spaces, newlines)
+                    const cleanSeed = seedPhrase.replace(/\s+/g, ' ').trim();
+                    
+                    // Check if it's a valid mnemonic (12 or 24 words)
+                    const words = cleanSeed.split(' ');
+                    if (words.length !== 12 && words.length !== 24) {
+                        throw new Error(`Invalid seed phrase: expected 12 or 24 words, got ${words.length}`);
+                    }
+
+                    // Create wallet from mnemonic
+                    wallet = await window.cosmjs.protoSigning.DirectSecp256k1HdWallet.fromMnemonic(
+                        cleanSeed,
+                        {
+                            prefix: currentConfig.prefix,
+                            hdPaths: [window.cosmjs.protoSigning.makeCosmoshubPath(0)],
+                        }
+                    );
+                    
+                    // If custom HD path provided, try to use it
+                    if (hdPath && hdPath !== 'm/44\'/118\'/0\'/0/0') {
+                        try {
+                            // Parse custom path
+                            const pathParts = hdPath.replace(/^m\//, '').split('/');
+                            const accountIndex = parseInt(pathParts[pathParts.length - 1]) || 0;
+                            const changeIndex = parseInt(pathParts[pathParts.length - 2]) || 0;
+                            
+                            // Use custom path
+                            wallet = await window.cosmjs.protoSigning.DirectSecp256k1HdWallet.fromMnemonic(
+                                cleanSeed,
+                                {
+                                    prefix: currentConfig.prefix,
+                                    hdPaths: [window.cosmjs.protoSigning.makeCosmoshubPath(accountIndex, changeIndex)],
+                                }
+                            );
+                        } catch (e) {
+                            // Fall back to default path
+                            console.warn('Custom HD path failed, using default:', e);
+                        }
+                    }
+                    
+                    return wallet;
+                } catch (e) {
+                    throw new Error(`Invalid seed phrase: ${e.message}`);
+                }
+            }
+
+            // ----- Derive Wallet (main) -----
+            async function deriveWallet() {
+                setLoading(true);
+                
+                try {
+                    let walletObj = null;
+                    
+                    if (authMethod === 'privatekey') {
+                        const pkHex = getPrivateKey();
+                        if (!pkHex) {
+                            setLoading(false);
+                            return;
+                        }
+                        setStatus(`🔓 Deriving wallet from private key for ${currentConfig.icon} ${currentConfig.name}...`, 'info');
+                        walletObj = await deriveWalletFromPrivateKey(pkHex);
+                    } else {
+                        const seedPhrase = getSeedPhrase();
+                        if (!seedPhrase) {
+                            setLoading(false);
+                            return;
+                        }
+                        const hdPath = hdPathInput.value.trim() || "m/44'/118'/0'/0/0";
+                        setStatus(`🔓 Deriving wallet from seed phrase for ${currentConfig.icon} ${currentConfig.name}...`, 'info');
+                        walletObj = await deriveWalletFromSeedPhrase(seedPhrase, hdPath);
+                    }
+
+                    if (!walletObj) {
+                        throw new Error('Failed to derive wallet');
+                    }
+
+                    wallet = walletObj;
                     const [account] = await wallet.getAccounts();
                     walletAddress = account.address;
 
                     walletInfoDiv.style.display = 'block';
                     walletAddressDisplay.textContent = walletAddress;
                     networkDisplay.textContent = `${currentConfig.icon} ${currentConfig.name}`;
+                    authMethodDisplay.textContent = authMethod === 'privatekey' ? 'Private Key' : 'Seed Phrase';
 
                     poolSelectionSection.style.display = 'block';
 
-                    setStatus(`✅ Wallet derived successfully!\n📍 Address: ${walletAddress}\n⛓️ Network: ${currentConfig.name}`, 'success');
+                    setStatus(
+                        `✅ Wallet derived successfully!\n` +
+                        `📍 Address: ${walletAddress}\n` +
+                        `⛓️ Network: ${currentConfig.name}\n` +
+                        `🔑 Method: ${authMethod === 'privatekey' ? 'Private Key' : 'Seed Phrase'}`,
+                        'success'
+                    );
 
                     // Auto-detect pools
                     await detectUserPools();
 
                 } catch (e) {
-                    setStatus(`❌ Invalid private key for ${currentConfig.name}: ${e.message}`, 'error');
+                    setStatus(`❌ Wallet derivation failed: ${e.message}`, 'error');
                     wallet = null;
                     walletAddress = null;
                     walletInfoDiv.style.display = 'none';
@@ -1085,8 +1274,13 @@
             maxBtn.addEventListener('click', setMaxAmount);
             switchNetworkBtn.addEventListener('click', switchNetworkButton);
 
+            // Enter key support for auth inputs
             privateKeyInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') deriveWallet();
+            });
+            
+            seedPhraseInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && e.ctrlKey) deriveWallet();
             });
 
             poolAddressInput.addEventListener('change', () => {
@@ -1103,9 +1297,10 @@
             });
 
             // ----- Init -----
-            setStatus('🚀 Ready. Select a network and enter your private key to begin.', 'info');
+            setStatus('🚀 Ready. Select a network and enter your private key or seed phrase to begin.', 'info');
             console.log('🔧 Jayswap LP Tool - Multi-Chain Support loaded.');
             console.log('📋 Available networks:', Object.keys(NETWORKS));
+            console.log('🔑 Authentication methods: Private Key, Seed Phrase');
         })();
     </script>
 </body>
